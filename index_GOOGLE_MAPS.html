@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#111814">
+  <title>Las Yuntas · Visor 3D</title>
+  <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/4.1.0/model-viewer.min.js"></script>
+  <style>
+    *{box-sizing:border-box} html,body{margin:0;height:100%;background:#111814;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;overflow:hidden}
+    .app{height:100%;position:relative;background:radial-gradient(circle at 50% 30%,#29372e 0,#111814 65%)}
+    model-viewer{width:100%;height:100%;background:transparent;--poster-color:transparent;touch-action:none;overscroll-behavior:none}
+    .brand{position:absolute;z-index:5;top:max(16px,env(safe-area-inset-top));left:18px;pointer-events:none;text-shadow:0 2px 8px #000}
+    .brand h1{margin:0;font-size:clamp(24px,5vw,42px);font-weight:650;letter-spacing:.03em}.brand p{margin:3px 0 0;font-size:13px;opacity:.82;letter-spacing:.12em;text-transform:uppercase}
+    .toolbar{position:absolute;z-index:6;left:50%;bottom:max(18px,env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;gap:8px;padding:7px;background:rgba(12,18,14,.72);border:1px solid rgba(255,255,255,.15);border-radius:16px;backdrop-filter:blur(12px);white-space:nowrap}
+    button{appearance:none;border:0;border-radius:11px;padding:11px 14px;background:rgba(255,255,255,.12);color:#fff;font:600 14px system-ui;cursor:pointer;min-height:44px}button:hover{background:rgba(255,255,255,.2)}button:active{transform:scale(.98)}
+    .hint{position:absolute;z-index:4;right:14px;top:max(18px,env(safe-area-inset-top));max-width:190px;padding:9px 11px;border-radius:12px;background:rgba(0,0,0,.38);font-size:12px;line-height:1.35;backdrop-filter:blur(8px);opacity:.9;transition:opacity .5s}
+    .loading{position:absolute;z-index:8;left:50%;top:50%;transform:translate(-50%,-50%);padding:12px 16px;border-radius:12px;background:rgba(0,0,0,.65);font-size:14px;pointer-events:none}
+    .progress{width:170px;height:4px;background:rgba(255,255,255,.18);border-radius:99px;margin-top:8px;overflow:hidden}.bar{height:100%;width:0;background:#fff;transition:width .15s}
+    @media(max-width:600px){.hint{top:auto;bottom:82px;right:12px;max-width:165px}.toolbar{width:calc(100% - 24px);justify-content:center}.toolbar button{flex:1;padding:10px 8px}.brand h1{font-size:28px}}
+  </style>
+</head>
+<body>
+<div class="app">
+  <div class="brand"><h1>Las Yuntas</h1><p>Finca · Visor 3D</p></div>
+  <div class="hint" id="hint">1 dedo: mover · 2 dedos: zoom, girar e inclinar</div>
+  <div class="loading" id="loading">Cargando Las Yuntas…<div class="progress"><div class="bar" id="bar"></div></div></div>
+  <model-viewer id="viewer" src="las_yuntas.glb" alt="Modelo tridimensional de la finca Las Yuntas" touch-action="none" disable-tap shadow-intensity="0.7" exposure="1.05" environment-image="neutral" interaction-prompt="none" min-camera-orbit="auto 8deg 2%" max-camera-orbit="auto 88deg 800%" interpolation-decay="120" orbit-sensitivity="0.8"></model-viewer>
+  <div class="toolbar">
+    <button id="home" type="button">⌂ Vista general</button>
+    <button id="spin" type="button">⟳ Giro: sí</button>
+  </div>
+</div>
+<script>
+const v=document.getElementById('viewer'),
+      loading=document.getElementById('loading'),
+      bar=document.getElementById('bar'),
+      hint=document.getElementById('hint'),
+      spin=document.getElementById('spin');
+
+const fingers=new Map();
+let ready=false, theta=0, phi=0, radius=1, tx=0, ty=0, tz=0;
+let home=null, onePrev=null, twoPrev=null;
+let lastTap=0, tapX=0, tapY=0, secondTapHold=false, secondTapStartY=0, secondTapStartR=1;
+let twoStartTime=0, twoMoved=false;
+
+const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+const wrap=a=>Math.atan2(Math.sin(a),Math.cos(a));
+
+function apply(){
+  if(!ready)return;
+  v.cameraOrbit=`${theta}rad ${phi}rad ${radius}m`;
+  v.cameraTarget=`${tx}m ${ty}m ${tz}m`;
+}
+
+function state2(){
+  const a=[...fingers.values()];
+  if(a.length<2)return null;
+  const p=a[0],q=a[1], dx=q.x-p.x,dy=q.y-p.y;
+  return {cx:(p.x+q.x)/2,cy:(p.y+q.y)/2,d:Math.max(1,Math.hypot(dx,dy)),ang:Math.atan2(dy,dx)};
+}
+
+function zoomAt(factor){
+  radius=clamp(radius*factor,home.radius*.025,home.radius*12);
+  apply();
+}
+
+v.addEventListener('progress',e=>{bar.style.width=Math.round(e.detail.totalProgress*100)+'%'});
+
+v.addEventListener('load',()=>{
+  loading.style.display='none';
+  const o=v.getCameraOrbit(), t=v.getCameraTarget();
+  theta=o.theta; phi=o.phi; radius=o.radius;
+  tx=t.x; ty=t.y; tz=t.z;
+  home={theta,phi,radius,tx,ty,tz};
+  ready=true;
+  apply();
+  setTimeout(()=>hint.style.opacity='0',8000);
+});
+
+v.addEventListener('error',()=>{
+  loading.innerHTML='No se pudo cargar el modelo.<br><small>Abre este visor desde un servidor web.</small>';
+});
+
+v.addEventListener('pointerdown',e=>{
+  if(!ready || e.pointerType==='mouse')return;
+  e.preventDefault();
+  try{v.setPointerCapture(e.pointerId)}catch(_){}
+  fingers.set(e.pointerId,{x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,t:performance.now()});
+
+  if(fingers.size===1){
+    const now=performance.now();
+    const isDouble=(now-lastTap<330 && Math.hypot(e.clientX-tapX,e.clientY-tapY)<45);
+    secondTapHold=isDouble;
+    secondTapStartY=e.clientY;
+    secondTapStartR=radius;
+    onePrev={x:e.clientX,y:e.clientY};
+    twoPrev=null;
+  } else if(fingers.size===2){
+    twoPrev=state2();
+    onePrev=null;
+    twoStartTime=performance.now();
+    twoMoved=false;
+    secondTapHold=false;
+  }
+},{passive:false});
+
+v.addEventListener('pointermove',e=>{
+  if(!ready || e.pointerType==='mouse' || !fingers.has(e.pointerId))return;
+  e.preventDefault();
+  const old=fingers.get(e.pointerId);
+  fingers.set(e.pointerId,{...old,x:e.clientX,y:e.clientY});
+
+  if(fingers.size===1 && onePrev){
+    const p=[...fingers.values()][0];
+
+    // Google Maps: double tap + hold + vertical drag = one-handed zoom.
+    if(secondTapHold){
+      const dy=e.clientY-secondTapStartY;
+      radius=clamp(secondTapStartR*Math.exp(dy*0.008),home.radius*.025,home.radius*12);
+      apply();
+      return;
+    }
+
+    // ONE FINGER = PAN ON THE GROUND PLANE. Never rotates.
+    const dx=p.x-onePrev.x, dy=p.y-onePrev.y;
+    const scale=radius/Math.max(innerHeight,500)*1.55;
+    // screen-right projected onto ground according to current heading
+    const rx=Math.cos(theta), rz=-Math.sin(theta);
+    // screen-up projected onto ground
+    const ux=Math.sin(theta), uz=Math.cos(theta);
+    tx += (-dx*rx + dy*ux)*scale;
+    tz += (-dx*rz + dy*uz)*scale;
+    apply();
+    onePrev={x:p.x,y:p.y};
+  }
+
+  if(fingers.size===2 && twoPrev){
+    const cur=state2();
+    const dc=Math.hypot(cur.cx-twoPrev.cx,cur.cy-twoPrev.cy);
+    if(dc>1 || Math.abs(cur.d-twoPrev.d)>1 || Math.abs(wrap(cur.ang-twoPrev.ang))>.01) twoMoved=true;
+
+    // PINCH = zoom.
+    radius=clamp(radius*(twoPrev.d/cur.d),home.radius*.025,home.radius*12);
+
+    // TWIST = unrestricted heading rotation.
+    theta -= wrap(cur.ang-twoPrev.ang);
+
+    // TWO FINGERS MOVING TOGETHER VERTICALLY = tilt.
+    // Up -> more oblique/3D. Down -> overhead/2D.
+    const dcy=cur.cy-twoPrev.cy;
+    const pinchChange=Math.abs(cur.d-twoPrev.d)/Math.max(twoPrev.d,1);
+    const twistChange=Math.abs(wrap(cur.ang-twoPrev.ang));
+    if(pinchChange<0.035 && twistChange<0.035){
+      phi=clamp(phi-dcy*0.0065,0.035,Math.PI/2-0.025);
+    }
+
+    apply();
+    twoPrev=cur;
+  }
+},{passive:false});
+
+function finish(e){
+  if(e.pointerType==='mouse' || !fingers.has(e.pointerId))return;
+  const f=fingers.get(e.pointerId);
+  const duration=performance.now()-f.t;
+  const travel=Math.hypot(e.clientX-f.sx,e.clientY-f.sy);
+
+  // Two-finger tap = zoom out one step.
+  if(fingers.size===2 && !twoMoved && performance.now()-twoStartTime<320){
+    zoomAt(1.45);
+  }
+
+  fingers.delete(e.pointerId);
+
+  if(fingers.size===0){
+    // Single tap bookkeeping + double tap zoom-in.
+    if(duration<280 && travel<18){
+      const now=performance.now();
+      if(secondTapHold){
+        // If the second tap was not dragged, this is a normal double-tap zoom-in.
+        zoomAt(0.62);
+        lastTap=0;
+      }else{
+        lastTap=now; tapX=e.clientX; tapY=e.clientY;
+      }
+    }
+    onePrev=null; twoPrev=null; secondTapHold=false;
+  }else if(fingers.size===1){
+    const p=[...fingers.values()][0];
+    onePrev={x:p.x,y:p.y}; twoPrev=null; secondTapHold=false;
+  }
+}
+v.addEventListener('pointerup',finish,{passive:false});
+v.addEventListener('pointercancel',finish,{passive:false});
+
+document.getElementById('home').addEventListener('click',()=>{
+  if(!home)return;
+  ({theta,phi,radius,tx,ty,tz}=home);
+  apply();
+});
+
+spin.textContent='⟳ Norte / inicio';
+spin.addEventListener('click',()=>{
+  if(!home)return;
+  theta=home.theta;
+  apply();
+});
+
+// Prevent browser gestures from stealing touches.
+['touchstart','touchmove','gesturestart','gesturechange'].forEach(type=>
+  v.addEventListener(type,e=>{if(e.cancelable)e.preventDefault()},{passive:false})
+);
+</script>
+</body>
+</html>
